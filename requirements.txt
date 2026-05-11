@@ -1,2 +1,7 @@
 whisperx
-torch  # whisperx 依赖, 确保 CUDA 可用时自动用 GPU
+torch
+torchaudio
+openai
+pandas
+soundfile
+librosa

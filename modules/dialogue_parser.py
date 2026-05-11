@@ -10,29 +10,21 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from anthropic import Anthropic
+from openai import OpenAI
 
 from modules.logger import setup_logger
 
 logger = setup_logger()
 
-# ── LLM 配置（从 Claude Code settings 读取） ──
+# ── LLM 配置（环境变量优先） ──
 
 def _load_llm_config() -> tuple[str, str, str]:
-    """从 Claude Code 配置中读取 API 设置。返回 (base_url, api_key, model)。"""
-    settings_path = Path.home() / ".claude" / "settings.json"
-    if settings_path.exists():
-        try:
-            settings = json.loads(settings_path.read_text("utf-8"))
-            env = settings.get("env", {})
-            return (
-                env.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
-                env.get("ANTHROPIC_AUTH_TOKEN", ""),
-                env.get("ANTHROPIC_DEFAULT_SONNET_MODEL", env.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")),
-            )
-        except Exception:
-            pass
-    return ("https://api.anthropic.com", os.environ.get("ANTHROPIC_API_KEY", ""), "claude-sonnet-4-6")
+    """从环境变量读取 LLM 配置。返回 (base_url, api_key, model)。"""
+    return (
+        os.environ.get("LLM_BASE_URL", "http://localhost:18789/v1"),
+        os.environ.get("LLM_API_KEY", "dummy"),
+        os.environ.get("LLM_MODEL", "deepseek-chat"),
+    )
 
 
 _BASE_URL, _API_KEY, _MODEL = _load_llm_config()
@@ -77,13 +69,10 @@ _LLM_DIR = Path(__file__).resolve().parent.parent / "logs"
 _ERROR_LOG = _LLM_DIR / "llm_errors.json"
 
 
-def call_claude(system_prompt: str, user_content: str, temperature: float = 0.1, max_tokens: int = 1024) -> dict:
-    """统一 LLM 入口。要求 JSON 输出，解析失败自动重试一次（2x max_tokens）。"""
-    if not _API_KEY:
-        logger.error("API key 未配置（检查 ~/.claude/settings.json 或 ANTHROPIC_API_KEY 环境变量）")
-        return {}
-
-    client = Anthropic(base_url=_BASE_URL, api_key=_API_KEY)
+def call_llm(system_prompt: str, user_content: str, temperature: float = 0.1, max_tokens: int = 1024) -> dict:
+    """统一 LLM 入口（OpenAI 兼容接口），通过 OpenClaw Gateway 调用。
+    要求 JSON 输出，解析失败自动重试一次（2x max_tokens）。"""
+    client = OpenAI(base_url=_BASE_URL, api_key=_API_KEY)
 
     def _parse_response(text: str) -> dict:
         if "```json" in text:
@@ -94,15 +83,16 @@ def call_claude(system_prompt: str, user_content: str, temperature: float = 0.1,
 
     def _call_and_parse(tokens: int, conciseness_hint: bool = False) -> dict:
         sp = system_prompt + (" Keep your JSON output concise." if conciseness_hint else "")
-        response = client.messages.create(
+        response = client.chat.completions.create(
             model=_MODEL,
             max_tokens=tokens,
             temperature=temperature,
-            system=sp,
-            messages=[{"role": "user", "content": user_content}],
+            messages=[
+                {"role": "system", "content": sp},
+                {"role": "user", "content": user_content},
+            ],
         )
-        text_blocks = [b for b in response.content if getattr(b, "type", None) == "text"]
-        text = text_blocks[0].text if text_blocks else ""
+        text = response.choices[0].message.content or ""
         return _parse_response(text)
 
     try:
@@ -197,7 +187,7 @@ _SEPARATE_SYSTEM = """你是一个对话分析助手。你的任务是根据对�
 def _separate_roles(segments: list[dict]) -> tuple[list[dict], list[dict]]:
     """步骤1：用语义特征区分老师和家长（LLM 驱动）。"""
     dialogue_text = _format_segments(segments)
-    result = call_claude(_SEPARATE_SYSTEM, dialogue_text, max_tokens=4096)
+    result = call_llm(_SEPARATE_SYSTEM, dialogue_text, max_tokens=4096)
 
     teacher_idx = result.get("teacher_indices", [])
     parent_idx = result.get("parent_indices", [])
@@ -249,7 +239,7 @@ def _analyze_parent(parent_utterances: list[dict]) -> ParentProfile:
         )
 
     text = _format_utterances(parent_utterances)
-    result = call_claude(_PARENT_SYSTEM, text, max_tokens=2048)
+    result = call_llm(_PARENT_SYSTEM, text, max_tokens=2048)
 
     if not result:
         return ParentProfile(
@@ -299,7 +289,7 @@ def _detect_stage(parent_profile: ParentProfile, segments: list[dict]) -> StageA
     dialogue_text = _format_segments(segments)
     user_content = f"{profile_text}\n\n完整对话：\n{dialogue_text}"
 
-    result = call_claude(_STAGE_SYSTEM, user_content, max_tokens=2048)
+    result = call_llm(_STAGE_SYSTEM, user_content, max_tokens=2048)
 
     if not result:
         return StageAnalysis(stage="未知", evidence=[], coverage="未知")
@@ -358,7 +348,7 @@ def _observe_teacher(
         f"老师发言：\n{_format_utterances(teacher_utterances)}"
     )
 
-    result = call_claude(_TEACHER_SYSTEM, context, max_tokens=4096)
+    result = call_llm(_TEACHER_SYSTEM, context, max_tokens=4096)
 
     if not result:
         return TeacherObservations(patterns=[], speaking_style="未知", key_phrases=[])

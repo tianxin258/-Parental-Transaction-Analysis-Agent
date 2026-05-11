@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
-from modules.dialogue_parser import call_claude, DialogueStructure
+from modules.dialogue_parser import call_llm, DialogueStructure
 from modules.logger import setup_logger
 
 logger = setup_logger()
@@ -127,7 +127,7 @@ def diagnose(ds: DialogueStructure) -> DiagnosisReport:
     )
 
     logger.info("诊断中（1 次 LLM 调用）...")
-    result = call_claude(_DIAGNOSIS_SYSTEM, user_content, max_tokens=2048)
+    result = call_llm(_DIAGNOSIS_SYSTEM, user_content, max_tokens=2048)
 
     if not result:
         logger.error("诊断 LLM 调用失败")
