@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 敏感数据
+data/input/
+data/output/
+logs/
+
+# 环境变量
+.env
