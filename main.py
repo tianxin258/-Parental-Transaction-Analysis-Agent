@@ -12,6 +12,7 @@
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from modules.logger import setup_logger
@@ -87,7 +88,7 @@ def run_module2(segments: list[dict], case: str) -> dict:
     return output
 
 
-def run_module3(ds_data: dict, case: str) -> dict:
+def run_module3(ds_data: dict, case: str, timing: dict | None = None) -> dict:
     """模块3: 问题诊断(评价层)。"""
     from dataclasses import asdict
     from modules.dialogue_parser import DialogueStructure, ParentProfile, StageAnalysis, TeacherObservations
@@ -108,6 +109,8 @@ def run_module3(ds_data: dict, case: str) -> dict:
 
     report = diagnose(ds)
     output = asdict(report)
+    if timing:
+        output["timing"] = timing
     save_json(case, output, "diagnosis_report.json")
     return output
 
@@ -172,10 +175,12 @@ def main():
     if not args.audio and not args.segments:
         parser.error("请提供 --audio(录音文件) 或 --segments(已有 segments.json)")
 
+    t_start = time.time()
     case = _resolve_case_name(args)
     logger.info(f"案例名称: {case}")
 
     # 模块1: 语音转录
+    t0 = time.time()
     if args.audio:
         segments = run_module1(args.audio, case, args.model)
     else:
@@ -185,16 +190,32 @@ def main():
             sys.exit(1)
         segments = load_json(seg_path)
         logger.info(f"加载已有 segments ({len(segments)} 段),跳过转录")
+    m1_time = round(time.time() - t0, 1)
 
     # 模块2: 对话拆解
+    t0 = time.time()
     d2 = run_module2(segments, case)
+    m2_time = round(time.time() - t0, 1)
 
     # 模块3: 问题诊断
-    d3 = run_module3(d2, case)
+    t0 = time.time()
+    timing = {
+        "module1_seconds": m1_time,
+        "module2_seconds": m2_time,
+    }
+    d3 = run_module3(d2, case, timing=timing)
+    m3_time = round(time.time() - t0, 1)
+    timing["module3_seconds"] = m3_time
+    timing["total_seconds"] = round(time.time() - t_start, 1)
+
+    # 更新 timing 到文件
+    d3["timing"] = timing
+    save_json(case, d3, "diagnosis_report.json")
 
     # 输出报告
     print_report(d2, d3)
     logger.info(f"中间文件保存在 {(OUT_ROOT / case).resolve()}")
+    logger.info(f"全链路耗时: 总计 {timing['total_seconds']}s (模块1: {m1_time}s, 模块2: {m2_time}s, 模块3: {m3_time}s)")
     logger.info("全链路完成。")
 
 
