@@ -165,7 +165,7 @@ def main():
     parser = argparse.ArgumentParser(description="AI家长成交分析Agent - 一键全链路分析")
     parser.add_argument("--audio", help="通话录音文件路径 (.mp3/.wav/.m4a)")
     parser.add_argument("--segments", help="已有 segments.json,跳过转录直接分析")
-    parser.add_argument("--model", default="base", help="Whisper 模型大小 (tiny/base/small/medium/large)")
+    parser.add_argument("--model", default="base", help="已废弃（FunASR 使用 Paraformer，无需指定模型大小），保留兼容")
     parser.add_argument("--context", help="补充背景文本文件(暂未接入模块管线)")
     args = parser.parse_args()
 

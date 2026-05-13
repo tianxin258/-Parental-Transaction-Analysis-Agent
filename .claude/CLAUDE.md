@@ -20,9 +20,9 @@ cd "E:\documents\AI-practice\AI家长成交分析Agent" && conda run -n ai_agent
 
 **注意事项**：
 - 虚拟环境：`ai_agent`（conda）
-- 转录耗时约 6 分钟（Whisper base + 说话人分离）
+- 转录耗时约 1-2 分钟（FunASR Paraformer + CAM++，CPU 推理）
 - 模块2+3 耗时约 30 秒（5 次 LLM 调用）
-- 模块3 偶尔 JSON 截断，重试即可
+- 首次运行自动从 ModelScope 下载模型（~500MB），后续使用缓存
 
 ---
 
@@ -45,9 +45,10 @@ cd "E:\documents\AI-practice\AI家长成交分析Agent" && conda run -n ai_agent
 
 ```
                 ┌─────────────────┐
-  Audio ──────→ │  WhisperX 管线  │ ─→ segments ─┐
+  Audio ──────→ │  FunASR 管线    │ ─→ segments ─┐
+                │ (Paraformer +   │              │
+                │  CAM++ 说话人)  │              ├──→ [模块2 观察层] → [模块3 评价层]
                 └─────────────────┘              │
-                                                 ├──→ [模块2 观察层] → [模块3 评价层]
                 ┌─────────────────┐              │
   Text (背景) ─→│  背景信息        │ ─→ 上下文 ──┘
                 └─────────────────┘
@@ -61,9 +62,12 @@ cd "E:\documents\AI-practice\AI家长成交分析Agent" && conda run -n ai_agent
 | **观察层** | 模块2 (dialogue_parser.py) | 事实提取：角色/家长画像/成交阶段/老师行为模式 |
 | **评价层** | 模块3 (diagnosis.py) | 价值判断：因果归因 + 致命失误 + 替代话术 |
 
-### 模块1：语音转文本 (WhisperX 管线)
-- 完整管线：转录 → 时间轴对齐 → 说话人分离(pyannote) → 合并
-- 说话人分离需要 HuggingFace token，已设置系统环境变量 `HF_TOKEN`
+### 模块1：语音转文本 (FunASR 管线)
+- 完整管线：VAD → Paraformer 转录 → CAM++ 说话人分离 → CT-PUNC 标点恢复 → 同说话人合并
+- FunASR 输出粒度过细（每句话一段），通过 `_merge_segments()` 合并连续同说话人片段，将 ~335 句 → ~46 段
+- 使用阿里达摩院 FunASR 生态，CPU 友好，中文优化（CER 1.68% vs Whisper 5.14%）
+- 模型自动从 ModelScope 下载，缓存在 `~/.cache/modelscope/`，无需 HuggingFace token
+- 与旧 WhisperX 相比：速度快 8-10x，内存占用降低 60%，中文精度更高
 
 ### 模块2：对话结构拆解（观察层）
 
@@ -71,7 +75,7 @@ cd "E:\documents\AI-practice\AI家长成交分析Agent" && conda run -n ai_agent
 - **Observation vs Judgment 分离**：模块2 只做事实观察，模块3 做价值判断
 - **串行推理链**：家长画像 → 阶段判断 → 老师行为观察（非并行分类器）
 - **语义驱动**：角色分离基于语义特征（是否在讲课程、引导提问、解释方案），说话时长仅作回退信号
-- **LLM 后端**：默认模型，统一 `_call_claude()` 入口
+- **LLM 后端**：通过环境变量 `LLM_BASE_URL` 配置，统一 `call_llm()` 入口（OpenAI 兼容接口）
 
 **数据流**：
 ```
@@ -112,7 +116,7 @@ segments (Module 1)
 ```
 AI家长成交分析Agent/
 ├── modules/
-│   ├── stt.py              # 语音转文本 (Whisper)
+│   ├── stt.py              # 语音转文本 (FunASR: Paraformer + CAM++)
 │   ├── dialogue_parser.py  # 对话结构拆解
 │   └── diagnosis.py        # 问题诊断
 ├── data/
@@ -135,9 +139,6 @@ python main.py --audio data/input/test.mp3
 
 # 跳过转录，直接分析已有 segments
 python main.py --segments data/output/test/segments.json
-
-# 指定 Whisper 模型大小（默认 base）
-python main.py --audio data/input/test.mp3 --model medium
 ```
 
 输出保存在 `data/output/<录音文件名>/`：

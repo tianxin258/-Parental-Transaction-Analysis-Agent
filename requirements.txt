@@ -1,7 +1,6 @@
-whisperx
+funasr
 torch
 torchaudio
 openai
 pandas
 soundfile
-librosa

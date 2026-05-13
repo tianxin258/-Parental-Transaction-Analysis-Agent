@@ -10,3 +10,4 @@ logs/
 
 # 环境变量
 .env
+.parent_agent_env
